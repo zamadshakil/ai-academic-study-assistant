@@ -1,0 +1,183 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import { createPortal } from "react-dom"
+import {
+  MessageSquare,
+  FileText,
+  CheckCircle2,
+  AlertCircle,
+} from "lucide-react"
+import { cn } from "@/lib/utils"
+import { ChatPanel } from "@/components/dashboard/smart-ai/chat-panel"
+import { SubmissionsReviewPanel } from "@/components/dashboard/smart-ai/submissions-review-panel"
+import { CreditsBadge } from "@/components/dashboard/ai-usage/credits-badge"
+import type { Profile, Submission } from "@/lib/types"
+import { Sparkles } from "lucide-react"
+import { AcademicRAGPanel } from "@/components/dashboard/smart-ai/academic-rag-panel"
+
+type TabId = "academic" | "chat" | "submissions"
+
+type ProfileLite = Pick<Profile, "id" | "email" | "full_name" | "role" | "team_id">
+
+interface SmartAiShellProps {
+  profile: ProfileLite
+  submissions: Submission[]
+  services: { mcp: boolean; rag: boolean }
+  initialThreadId?: string | null
+  initialCourseId?: string
+}
+
+const TABS: {
+  id: TabId
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+  description: string
+}[] = [
+  {
+    id: "academic",
+    label: "Course RAG Assistant",
+    icon: Sparkles,
+    description: "Source-grounded Q&A with verifiable slide citations and confidence thresholding.",
+  },
+  {
+    id: "chat",
+    label: "Portal Assistant",
+    icon: MessageSquare,
+    description: "Ask questions about submissions, tasks, validation rules, and team performance.",
+  },
+  {
+    id: "submissions",
+    label: "Submissions Review",
+    icon: FileText,
+    description: "Browse PDFs and images with one-click AI summaries grounded in retrieved context.",
+  },
+]
+
+export function SmartAiShell({ profile, submissions, services, initialThreadId, initialCourseId }: SmartAiShellProps) {
+  const [active, setActive] = useState<TabId>("academic")
+  const [seedPrompt, setSeedPrompt] = useState<string | null>(null)
+
+  const [portalTarget, setPortalTarget] = useState<Element | null>(null)
+
+  useEffect(() => {
+    setPortalTarget(document.getElementById("topbar-portal-target"))
+  }, [])
+
+  function jumpToChat(prompt: string) {
+    setSeedPrompt(prompt)
+    setActive("chat")
+  }
+
+  // Portal content: tabs + credits badge side by side in the topbar
+  // On mobile the badge is hidden here and shown below the topbar instead.
+  const portalContent = (
+    <div className="flex items-center gap-2 min-w-0 overflow-hidden">
+      <div
+        role="tablist"
+        aria-label="Smart AI sections"
+        className="flex items-center gap-0.5 rounded-xl border border-border bg-card p-1 shadow-sm overflow-x-auto scrollbar-thin min-w-0"
+      >
+        {TABS.map((tab) => {
+          const Icon = tab.icon
+          const isActive = active === tab.id
+          return (
+            <button
+              key={tab.id}
+              role="tab"
+              aria-selected={isActive}
+              aria-controls={`smartai-${tab.id}`}
+              onClick={() => setActive(tab.id)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg px-2.5 sm:px-3.5 py-1.5 text-[13px] font-semibold whitespace-nowrap transition-all",
+                isActive
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              <Icon className="h-4 w-4" aria-hidden="true" />
+              <span className="hidden sm:inline">{tab.label}</span>
+            </button>
+          )
+        })}
+      </div>
+      {/* Desktop: badge sits next to the tabs; hidden on mobile to avoid wrapping */}
+      <div className="hidden sm:flex items-center">
+        <CreditsBadge />
+      </div>
+    </div>
+  )
+
+  return (
+    // Escape the layout's px-4/lg:px-8 py-6/lg:py-8 gutters so the chat
+    // panel stretches flush to the content-area edges with zero dead whitespace.
+    <div
+      className="flex flex-col flex-none overflow-hidden -mx-4 lg:-mx-8 -mt-6 lg:-mt-8 -mb-24 lg:-mb-12"
+      style={{ height: "calc(100vh - 64px)" }}
+    >
+      <div className="shrink-0">
+        {portalTarget ? createPortal(portalContent, portalTarget) : null}
+      </div>
+      {/* Mobile: show credit badge below the topbar tabs as a thin strip */}
+      <div className="sm:hidden flex items-center gap-2 px-4 py-1.5 border-b border-border bg-background/50">
+        <CreditsBadge />
+      </div>
+
+      {/* Panels */}
+      <div
+        id={`smartai-${active}`}
+        role="tabpanel"
+        aria-labelledby={`smartai-tab-${active}`}
+        className="flex-1 min-h-0 min-w-0 flex flex-col"
+      >
+        {active === "academic" ? (
+          <div className="flex-1 min-h-0 overflow-auto px-4 lg:px-8 py-4 lg:py-6">
+            <AcademicRAGPanel initialCourseId={initialCourseId} />
+          </div>
+        ) : null}
+        {active === "chat" ? (
+          <ChatPanel
+            profile={profile}
+            services={services}
+            seedPrompt={seedPrompt}
+            onSeedConsumed={() => setSeedPrompt(null)}
+            initialThreadId={initialThreadId}
+          />
+        ) : null}
+        {active === "submissions" ? (
+          <div className="flex-1 min-h-0 overflow-auto px-4 lg:px-8 py-4 lg:py-6">
+            <SubmissionsReviewPanel
+              submissions={submissions}
+              onAskAi={(s) =>
+                jumpToChat(
+                  `Summarize submission "${s.title}" (id ${s.id}). Highlight validation flags, score, and any reviewer follow-ups.`,
+                )
+              }
+            />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function ServiceBadge({ label, connected }: { label: string; connected: boolean }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold",
+        connected
+          ? "bg-[#e8f8eb] text-[#157a2a]"
+          : "bg-[#fff8e1] text-[#7a5b00]",
+      )}
+      title={connected ? `${label} service connected` : `${label} service not yet wired`}
+    >
+      {connected ? (
+        <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+      ) : (
+        <AlertCircle className="h-3 w-3" aria-hidden="true" />
+      )}
+      {label}
+    </span>
+  )
+}

@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: ai-academic-study-assistant
+    env: node
+    plan: free
+    buildCommand: corepack enable && pnpm install && pnpm run build
+    startCommand: node .next/standalone/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000

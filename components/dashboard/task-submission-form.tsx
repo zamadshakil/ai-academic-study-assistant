@@ -1,0 +1,404 @@
+"use client"
+
+import { useRef, useState, useTransition } from "react"
+import { CloudUpload, FileType2, Loader2, AlertTriangle, CheckCircle2, XCircle, Clock, X } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { Textarea } from "@/components/ui/textarea"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Button } from "@/components/ui/button"
+import { requestUploadUrl, createSubmissionFromKey } from "@/app/actions/submissions"
+import { usePipeline } from "@/hooks/use-pipeline"
+import { useTaskDeadlineNow } from "@/hooks/use-task-deadline-now"
+import { getTaskDeadlineWindow } from "@/lib/task-deadlines"
+
+const ACCEPTED_EXT = [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".txt", ".png", ".jpg", ".jpeg", ".xlsx", ".md"]
+
+interface TaskSubmissionFormProps {
+  taskId: string
+  taskTitle: string
+  dueAt: string | null
+  allowLate: boolean
+  lateSubmissionDeadline: string | null
+  requireLateReason: boolean
+  /** Server-rendered `Date.now()` timestamp used as the initial `now`, so
+   *  the deadline phase computed during SSR matches the one computed during
+   *  the first client hydration pass. Without this, the overdue alert and
+   *  the late-reason input can exist on one side and not the other,
+   *  triggering React hydration error #418. */
+  initialNow: number
+}
+
+/**
+ * Member-side submission form for a specific task. Computes whether the
+ * deadline has passed live, hides the late-reason field until needed, and
+ * blocks submission entirely when `allow_late` is false on an overdue task —
+ * matching the server-side enforcement in `createSubmission`.
+ *
+ * After upload, triggers the AI pipeline via POST /api/pipeline/[id] and
+ * shows live progress (queued → parsing → validating → passed/failed).
+ */
+export function TaskSubmissionForm({
+  taskId,
+  taskTitle,
+  dueAt,
+  allowLate,
+  lateSubmissionDeadline,
+  requireLateReason,
+  initialNow,
+}: TaskSubmissionFormProps) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [file, setFile] = useState<File | null>(null)
+  const [title, setTitle] = useState(taskTitle)
+  const [reason, setReason] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [pending, startTransition] = useTransition()
+  const [dragOver, setDragOver] = useState(false)
+  const [uploaded, setUploaded] = useState(false)
+
+  const pipeline = usePipeline({ refreshOnComplete: true })
+  const now = useTaskDeadlineNow(
+    [
+      {
+        id: taskId,
+        dueAt,
+        allowLate,
+        lateSubmissionDeadline,
+      },
+    ],
+    initialNow,
+  )
+  const deadline = getTaskDeadlineWindow(
+    {
+      dueAt,
+      allowLate,
+      lateSubmissionDeadline,
+    },
+    now,
+  )
+  const overdue = deadline.isOverdue
+  const blocked = deadline.isClosed
+  const reasonRequired = deadline.isLateWindowOpen && requireLateReason
+
+  function pickFile(f: File | null) {
+    setFile(f)
+    setError(null)
+    if (!f && inputRef.current) inputRef.current.value = ""
+  }
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (blocked) {
+      setError(
+        deadline.closureReason === "late_submission_deadline"
+          ? "Submission failed: the late submission deadline has passed."
+          : "Submission failed: the deadline has passed and late submissions are not allowed.",
+      )
+      return
+    }
+    if (!file) {
+      setError("Choose a file to upload.")
+      return
+    }
+    if (title.trim().length < 2) {
+      setError("Add a short title (2+ characters).")
+      return
+    }
+    if (reasonRequired && reason.trim().length < 8) {
+      setError("Late submission requires a reason (at least 8 characters).")
+      return
+    }
+    startTransition(async () => {
+      // Step 1: Obtain a pre-signed R2 PUT URL so the file goes directly to
+      // object storage, bypassing the Next.js server (and any Cloudflare WAF
+      // rules that block binary payloads in Server Action POST bodies).
+      const urlFd = new FormData()
+      urlFd.set("fileName", file.name)
+      urlFd.set("mimeType", file.type)
+      urlFd.set("fileSize", String(file.size))
+      const urlRes = await requestUploadUrl(urlFd)
+      if (!urlRes.ok || !urlRes.uploadUrl || !urlRes.key) {
+        setError(urlRes.error ?? "Failed to prepare upload.")
+        return
+      }
+
+      // Step 2: PUT the file directly to R2 (goes to r2.cloudflarestorage.com,
+      // not zamdevai.com, so the WAF never sees the binary payload).
+      try {
+        const putRes = await fetch(urlRes.uploadUrl, {
+          method: "PUT",
+          body: file,
+          headers: { "Content-Type": file.type },
+        })
+        if (!putRes.ok) {
+          setError(`Upload failed (HTTP ${putRes.status}). Please try again.`)
+          return
+        }
+      } catch {
+        setError("Network error during upload. Please check your connection and try again.")
+        return
+      }
+
+      // Step 3: Register the submission in the database.
+      const fd = new FormData()
+      fd.set("key", urlRes.key)
+      fd.set("mimeType", file.type)
+      fd.set("fileSize", String(file.size))
+      fd.set("title", title.trim())
+      fd.set("taskId", taskId)
+      if (deadline.isLateWindowOpen) fd.set("lateReason", reason.trim())
+      const res = await createSubmissionFromKey(fd)
+      if (!res.ok) {
+        setError(res.error ?? "Submission failed.")
+        return
+      }
+      setUploaded(true)
+      if (res.submissionId) {
+        pipeline.trigger(res.submissionId)
+      }
+    })
+  }
+
+  // Show pipeline progress after upload.
+  if (uploaded && pipeline.status !== "idle") {
+    return <PipelineProgress status={pipeline.status} />
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-4">
+      {overdue ? (
+        <div
+          role="alert"
+          className={cn(
+            "flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[12.5px] font-medium",
+            blocked
+              ? "border-destructive/40 bg-destructive/10 text-destructive"
+              : "border-amber-300 bg-amber-50 text-amber-900",
+          )}
+        >
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
+          <span>
+            {blocked
+              ? allowLate
+                ? "The late submission window has closed for this task."
+                : "The deadline has passed and this task does not allow late submissions."
+              : requireLateReason
+                ? "The deadline has passed. You can still submit, but a reason is required."
+                : "The deadline has passed. You can still submit during the late window."}
+          </span>
+        </div>
+      ) : null}
+
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          onDragOver={(e) => {
+            e.preventDefault()
+            setDragOver(true)
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragOver(false)
+            const f = e.dataTransfer.files?.[0]
+            if (f) pickFile(f)
+          }}
+          disabled={blocked}
+          className={cn(
+            "w-full rounded-xl border border-dashed p-5 text-left transition-colors",
+            blocked
+              ? "border-border bg-muted/40 cursor-not-allowed opacity-60"
+              : dragOver
+                ? "border-primary bg-[#f2f9ff]"
+                : "border-border bg-warm-white hover:bg-muted",
+          )}
+        >
+          <div className="flex items-start gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-background border border-border">
+              {file ? (
+                <FileType2 className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+              ) : (
+                <CloudUpload className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+              )}
+            </span>
+            <div className="flex-1 min-w-0 pr-6">
+              <p className="text-[13.5px] font-semibold truncate">
+                {file ? file.name : "Drop file or click to browse"}
+              </p>
+              <p className="mt-0.5 text-[11.5px] text-muted-foreground">
+                Up to 25 MB · PDF, DOC, DOCX, TXT, PPT, PNG, JPG, XLSX, MD
+              </p>
+            </div>
+          </div>
+        </button>
+        {file && !blocked && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              pickFile(null)
+            }}
+            aria-label="Remove selected file"
+            className="absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-muted text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        )}
+      </div>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept={ACCEPTED_EXT.join(",")}
+        className="sr-only"
+        onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+      />
+
+      <div className="grid gap-1.5">
+        <Label htmlFor="title">Submission title</Label>
+        <Input
+          id="title"
+          required
+          minLength={2}
+          maxLength={200}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          disabled={blocked}
+        />
+      </div>
+
+      {deadline.isLateWindowOpen ? (
+        <div className="grid gap-1.5">
+          <Label htmlFor="lateReason">
+            Reason for late submission{requireLateReason ? " (required)" : ""}
+          </Label>
+          <Textarea
+            id="lateReason"
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Briefly explain what caused the delay."
+            maxLength={1000}
+          />
+        </div>
+      ) : null}
+
+      {error ? (
+        <p role="alert" className="text-[12.5px] font-semibold text-destructive">
+          {error}
+        </p>
+      ) : null}
+
+      <div className="flex items-center justify-end">
+        <Button type="submit" disabled={!file || pending || blocked}>
+          {pending ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              Uploading…
+            </>
+          ) : deadline.isLateWindowOpen ? (
+            "Submit late"
+          ) : (
+            "Submit task"
+          )}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+// ── Pipeline Progress Component ────────────────────────────────────────────
+const STATUS_CONFIG = {
+  queued: {
+    icon: Clock,
+    label: "Queued",
+    detail: "Your file is uploaded and is being processed…",
+    color: "text-muted-foreground",
+    bg: "bg-muted/50",
+    animate: true,
+  },
+  parsing: {
+    icon: Loader2,
+    label: "Parsing document",
+    detail: "Extracting text from your document…",
+    color: "text-blue-600",
+    bg: "bg-blue-50",
+    animate: true,
+  },
+  validating: {
+    icon: Loader2,
+    label: "Processing in progress",
+    detail: "Your submission is being reviewed. Check back shortly…",
+    color: "text-primary",
+    bg: "bg-[#f2f9ff]",
+    animate: true,
+  },
+  passed: {
+    icon: CheckCircle2,
+    label: "Passed",
+    detail: "Your submission passed review.",
+    color: "text-green-600",
+    bg: "bg-green-50",
+    animate: false,
+  },
+  failed: {
+    icon: XCircle,
+    label: "Needs attention",
+    detail: "Your submission needs updates. Review the details below.",
+    color: "text-destructive",
+    bg: "bg-destructive/5",
+    animate: false,
+  },
+  needs_review: {
+    icon: AlertTriangle,
+    label: "Pending review",
+    detail: "Your submission needs manual review from your manager.",
+    color: "text-amber-600",
+    bg: "bg-amber-50",
+    animate: false,
+  },
+  late_submitted: {
+    icon: CheckCircle2,
+    label: "Submitted (late)",
+    detail: "Your late submission has been processed.",
+    color: "text-amber-600",
+    bg: "bg-amber-50",
+    animate: false,
+  },
+} as const
+
+function PipelineProgress({
+  status,
+}: {
+  status: string
+}) {
+  const config = STATUS_CONFIG[status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.queued
+  const Icon = config.icon
+
+  return (
+    <div className={cn("rounded-xl border border-border p-5", config.bg)}>
+      <div className="flex items-start gap-3">
+        <span className={cn("mt-0.5", config.color)}>
+          <Icon
+            className={cn("h-5 w-5", config.animate && "animate-spin")}
+            aria-hidden="true"
+          />
+        </span>
+        <div className="flex-1 min-w-0">
+          <p className={cn("text-[14px] font-semibold", config.color)}>
+            {config.label}
+          </p>
+          <p className="mt-1 text-[12.5px] text-muted-foreground">
+            {config.detail}
+          </p>
+          {config.animate && (
+            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-border/50">
+              <div className="h-full w-1/3 animate-pulse rounded-full bg-primary/60" />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

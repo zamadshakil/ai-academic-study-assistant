@@ -1,0 +1,106 @@
+"use client"
+
+import Link from "next/link"
+import { usePathname, useRouter } from "next/navigation"
+import { useCallback, useRef } from "react"
+import { cn } from "@/lib/utils"
+import { roleLabel } from "@/lib/auth-shared"
+import type { UserRole } from "@/lib/types"
+import { getDashboardNavGroups } from "./navigation"
+
+export function DashboardSidebar({ role, allowedHrefs }: { role: UserRole; allowedHrefs?: string[] }) {
+  const pathname = usePathname()
+  const router = useRouter()
+  const navGroups = getDashboardNavGroups(role, allowedHrefs)
+
+  // Track which routes we've already warmed in this session so a single
+  // hover or focus only triggers one prefetch per route per page.
+  const warmed = useRef<Set<string>>(new Set())
+  const warm = useCallback(
+    (href: string) => {
+      if (warmed.current.has(href)) return
+      warmed.current.add(href)
+      try {
+        router.prefetch(href)
+      } catch {
+        // prefetch is best-effort — never let it break navigation.
+      }
+    },
+    [router],
+  )
+
+  return (
+    <aside
+      className="hidden lg:flex w-64 shrink-0 flex-col border-r border-border bg-sidebar h-screen sticky top-0"
+      aria-label="Primary navigation"
+    >
+      <div className="flex items-center gap-2.5 px-5 h-16 border-b border-border">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-foreground text-background">
+          <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+            <path
+              d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 0h7v7h-7v-7z"
+              fill="currentColor"
+            />
+          </svg>
+        </div>
+        <div className="flex flex-col leading-tight">
+          <span className="text-[15px] font-semibold tracking-[-0.25px]">Academic Assistant</span>
+          <span className="text-[11px] font-medium text-muted-foreground">{roleLabel(role)}</span>
+        </div>
+      </div>
+
+      <nav className="flex-1 overflow-y-auto scrollbar-thin px-3 py-4 space-y-5">
+        {navGroups.map((group) => {
+          const items = group.items
+          return (
+            <div key={group.label}>
+              <div className="px-2 mb-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                {group.label}
+              </div>
+              <ul className="space-y-0.5">
+                {items.map((item) => {
+                  const Icon = item.icon
+                  const active =
+                    item.href === "/dashboard"
+                      ? pathname === "/dashboard"
+                      : pathname.startsWith(item.href)
+                  return (
+                    <li key={item.label}>
+                      <Link
+                        href={item.href}
+                        onMouseEnter={() => warm(item.href)}
+                        onFocus={() => warm(item.href)}
+                        className={cn(
+                          "group flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[14px] font-medium transition-colors",
+                          active
+                            ? "bg-sidebar-accent text-foreground"
+                            : "text-foreground/80 hover:bg-sidebar-accent hover:text-foreground",
+                        )}
+                        aria-current={active ? "page" : undefined}
+                      >
+                        <Icon
+                          className={cn(
+                            "h-4.5 w-4.5 shrink-0",
+                            active ? "text-primary" : "text-muted-foreground",
+                          )}
+                        />
+                        <span className="flex-1 truncate">{item.label}</span>
+                      </Link>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )
+        })}
+      </nav>
+
+      <div className="m-3 rounded-xl border border-border bg-background p-3.5 shadow-card">
+        <p className="text-[12px] font-semibold mb-1">Academic OBE Support</p>
+        <p className="text-[11px] leading-snug text-muted-foreground">
+          HEC / PEC Outcome-Based Education tracking & RAG citation engine. Advisor: Iqra Tariq.
+        </p>
+      </div>
+    </aside>
+  )
+}

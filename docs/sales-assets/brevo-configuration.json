@@ -1,0 +1,44 @@
+{
+  "verifiedAt": "2026-09-04T21:49:20.569Z",
+  "folderId": 16,
+  "lists": {
+    "Audit requests": 17,
+    "Opt-in nurture": 18,
+    "Qualified pilots": 19,
+    "Customers": 20,
+    "Do not contact": 21
+  },
+  "attributes": [
+    "HIER_NAME",
+    "HIER_COMPANY",
+    "HIER_ICP",
+    "HIER_TEAM_SIZE",
+    "HIER_VOLUME",
+    "HIER_WORKFLOW",
+    "HIER_PREFERRED_TIME",
+    "HIER_SOURCE",
+    "HIER_MEDIUM",
+    "HIER_CAMPAIGN",
+    "HIER_SCORE",
+    "HIER_REQUESTED_AT",
+    "HIER_PRIVACY_VERSION",
+    "HIER_MARKETING_REQUESTED",
+    "HIER_STAGE",
+    "HIER_OWNER",
+    "HIER_NEXT_STEP",
+    "HIER_NEXT_STEP_DATE",
+    "HIER_CONSENT_CONFIRMED",
+    "HIER_STOP_FOLLOWUP"
+  ],
+  "templates": {
+    "Nurture 01 - Map the review": 13,
+    "Nurture 02 - Find the baseline": 14,
+    "Nurture 03 - Human decisions": 15,
+    "Nurture 04 - Pilot scope": 16,
+    "Nurture 05 - Close the loop": 17
+  },
+  "automaticSending": false,
+  "mailingAddress": "Street 8, PCSIR, Johar Town, Lahore 54000, Pakistan",
+  "mailingAddressStatus": "Owner-supplied address applied and read back from inactive templates 13 through 17; postal delivery not independently verified.",
+  "notes": "Draft templates only. No contacts imported or emails sent. Sender verification, confirmed opt-in and unsubscribe QA remain required before activating nurture."
+}

@@ -1,0 +1,143 @@
+# Quick Start Guide — Manager Portal
+
+Get the portal running locally in **5 minutes**.
+
+## Prerequisites
+- Node.js 22+ (required by `engines` in package.json)
+- pnpm 9.15+
+- Git
+- Credentials from your team: Supabase (Railway Kong URL + JWTs), OpenRouter API key, R2, Railway Redis (`REDIS_URL`)
+
+## Setup
+
+```bash
+# 1. Clone repo
+git clone https://github.com/JobFlowAI/manager-portal.git
+cd manager-portal
+
+# 2. Install dependencies
+pnpm install
+
+# 3. Set up environment
+cp .env.local.example .env.local
+# ⚠️ Edit .env.local — see the file for detailed instructions on each variable
+
+# 4. Start dev server
+pnpm dev
+
+# 5. Open browser
+open http://localhost:3000
+```
+
+> **Note:** The AI validation pipeline runs in-process as a fire-and-forget async function — no separate background service is needed locally. Railway HTTP cron handles scheduled jobs in production.
+
+## Key URLs
+
+- **App:** http://localhost:3000
+- **Docs:** See `docs/` folder
+- **Database:** Supabase Studio on Railway (link in env vars)
+- **Redis:** Railway Redis plugin in the same project
+
+## Critical Environment Variables
+
+Copy these from your team's credentials to `.env.local`:
+
+```env
+# Supabase (self-hosted on Railway, fronted by Kong)
+NEXT_PUBLIC_SUPABASE_URL=https://kong-production-<id>.up.railway.app
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
+SUPABASE_SERVICE_ROLE_KEY=eyJ...
+
+# LLM (OpenRouter — powers both validation pipeline and Smart AI chat)
+OPENROUTER_API_KEY=sk-or-v1-...
+
+# File Storage (Cloudflare R2)
+R2_ACCOUNT_ID=...
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET_NAME=...
+R2_PUBLIC_URL=https://pub-<id>.r2.dev
+
+# Caching & Rate Limiting (Railway Redis plugin — reference REDIS_URL from the Redis service)
+REDIS_URL=redis://default:<password>@<host>:6379
+
+# Smart AI embeddings (optional — falls back to OpenRouter if unset)
+OPENAI_API_KEY=sk-...
+EMBEDDING_MODEL=openai/text-embedding-3-small
+
+# Direct Postgres connection for RAG indexing (RECOMMENDED on Railway).
+# Bypasses PostgREST's column-level schema cache, which has been unreliable
+# on the self-hosted Supabase stack. Use the Postgres internal URL.
+SUPABASE_DB_URL=postgresql://postgres:<password>@postgres.railway.internal:5432/postgres
+
+# Email (optional — skipped if missing)
+BREVO_API_KEY=...
+
+# Security
+CRON_SECRET=...
+```
+
+See `.env.local.example` for the **full list** with documentation for each variable.
+
+## Important Notes
+
+- ⚠️ **NEVER** commit `.env.local` to git
+- ⚠️ **NEVER** share credentials in Slack or email
+- ✓ Use the provided credentials from the team
+- ✓ Always refer to `.env.local.example` for what's needed
+- ✓ The pipeline runs in-process — no separate background service needed locally
+
+## First Time?
+
+1. Read `README.md` for full project overview
+2. See `docs/PROJECT_STATUS.md` for architecture details
+3. Check `docs/SMART_AI_AUDIT.md` for the Smart AI subsystem audit
+4. See `docs/CODEBASE_AUDIT.md` for code quality assessment
+
+## Common Commands
+
+```bash
+# Development
+pnpm dev                    # Start Next.js dev server
+pnpm build                  # Production build
+pnpm start                  # Run production build
+pnpm lint                   # Check code style
+
+# Database
+# Apply migrations via Supabase Studio → SQL Editor on Railway
+
+# Testing cron endpoint locally
+curl -i http://localhost:3000/api/cron/mark-missed
+# (CRON_SECRET is skipped when unset — safe for local dev)
+```
+
+## Troubleshooting
+
+**"Cannot find module '@supabase/ssr'"**
+→ Run `pnpm install`
+
+**"No SUPABASE_SERVICE_ROLE_KEY in env"**
+→ Check `.env.local` has the Railway Supabase service-role JWT
+
+**"Redis connection refused"**
+→ Check `REDIS_URL` is set in `.env.local` and reachable. With it unset, rate limiters fail-open locally and fail-closed in production — individual features will still work.
+
+**Smart AI chat returns 503**
+→ Check `OPENROUTER_API_KEY` is set in `.env.local`. The chat is fully native — no external services required.
+
+**Smart AI upload returns `rag_status: "failed"`**
+→ Hit `GET /api/smart-ai/health` while signed in. The response now reports each insert path independently (`direct_pg`, `postgrest`) so you can see which one is broken. The bulletproof fix is to set `SUPABASE_DB_URL` (or `DATABASE_URL`) on the manager-portal Railway service so the indexer talks to Postgres directly and skips PostgREST entirely. If `direct_pg.status: "ok"` then uploads will succeed regardless of PostgREST schema-cache state.
+
+**Railway deployment fails**
+→ Ensure `output: "standalone"` is in `next.config.mjs` and `railway.json` is present
+
+## Questions?
+
+- See `docs/PROJECT_STATUS.md` for architecture Q&A
+- See `docs/SMART_AI_AUDIT.md` for Smart AI details
+- See `README.md` for feature questions
+- Check GitHub issues for known issues
+
+---
+
+**Last Updated:** May 8, 2026
