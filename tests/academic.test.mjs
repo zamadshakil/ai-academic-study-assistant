@@ -377,3 +377,47 @@ test("14. Polymorphic Quiz Attempt: handles both user object and string studentI
   assert.equal(attemptObj.student_id, "student-bob")
 })
 
+test("15. Short token query resilience ('AI', 'A*') and stopword filtering in RAG search", async () => {
+  // Query with 'AI' and stopwords: 'what is AI in rational agents'
+  const aiResult = await academic.queryAcademicRAG(
+    "what is AI in rational agents",
+    "course-cs302"
+  )
+  assert.equal(aiResult.is_low_confidence, false)
+  assert.ok(aiResult.confidence_score >= 0.35)
+  assert.ok(aiResult.citations.length > 0)
+  assert.ok(aiResult.answer.toLowerCase().includes("rational"))
+
+  // Query with 'A*' and stopwords: 'how does A* search work'
+  const aStarResult = await academic.queryAcademicRAG(
+    "how does A* search work",
+    "course-cs302"
+  )
+  assert.equal(aStarResult.is_low_confidence, false)
+  assert.ok(aStarResult.citations.length > 0)
+  assert.ok(aStarResult.citations.some((c) => c.excerpt.toLowerCase().includes("a*") || c.page_or_slide.toLowerCase().includes("slide")))
+})
+
+test("16. Flashcard progress tracking & mastery calculation", async () => {
+  const decks = await academic.listFlashcardDecks("course-cs302")
+  assert.ok(decks.length > 0)
+  const deck = decks[0]
+
+  // Track 2 cards mastered, 1 card reviewing
+  const card1 = deck.cards[0]?.id || "c1"
+  const card2 = deck.cards[1]?.id || "c2"
+  const card3 = deck.cards[2]?.id || "c3"
+
+  const progress = await academic.updateFlashcardProgress(
+    deck.id,
+    "student-alice",
+    [card1, card2],
+    [card3]
+  )
+  assert.equal(progress.deck_id, deck.id)
+  assert.equal(progress.student_id, "student-alice")
+  assert.ok(progress.mastered_card_ids.includes(card1))
+  assert.ok(progress.mastered_card_ids.includes(card2))
+  assert.ok(progress.reviewing_card_ids.includes(card3))
+})
+

@@ -1801,7 +1801,70 @@ export async function queryAcademicRAG(
     }
   }
 
-  const queryTokens = queryLower.split(/\s+/).filter((t) => t.length > 2)
+  const ACADEMIC_STOPWORDS = new Set([
+    "what",
+    "is",
+    "the",
+    "are",
+    "how",
+    "does",
+    "explain",
+    "describe",
+    "for",
+    "and",
+    "with",
+    "from",
+    "that",
+    "this",
+    "which",
+    "into",
+    "about",
+    "can",
+    "you",
+    "tell",
+    "in",
+    "on",
+    "at",
+    "to",
+    "of",
+    "by",
+    "or",
+    "an",
+    "as",
+    "if",
+    "so",
+    "do",
+    "no",
+    "up",
+    "my",
+    "we",
+    "he",
+    "me",
+    "us",
+    "it",
+    "its",
+    "be",
+    "all",
+    "any",
+    "not",
+    "was",
+    "were",
+    "been",
+  ])
+
+  // Extract clean tokens: preserve alphanumeric and '*' (e.g., 'a*')
+  const rawTokens = queryLower
+    .replace(/[^\w\s*]/g, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+
+  let queryTokens = rawTokens.filter(
+    (t) => !ACADEMIC_STOPWORDS.has(t) && (t.length >= 2 || t === "a*")
+  )
+  if (queryTokens.length === 0 && rawTokens.length > 0) {
+    queryTokens = rawTokens
+  }
   const citations: RAGCitation[] = []
 
   for (const mat of materials) {
@@ -1837,7 +1900,11 @@ export async function queryAcademicRAG(
       }
 
       if (hits > 0) {
-        const similarity = Math.min(0.96, 0.30 + (hits / Math.max(queryTokens.length, 1)) * 0.65)
+        const matchRatio = hits / Math.max(queryTokens.length, 1)
+        const similarity =
+          matchRatio >= 0.25
+            ? Math.min(0.96, 0.20 + matchRatio * 0.76)
+            : Math.min(0.30, matchRatio * 1.2)
         citations.push({
           document_title: mat.title,
           page_or_slide: chunk.label,

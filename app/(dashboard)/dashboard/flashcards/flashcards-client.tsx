@@ -43,6 +43,7 @@ export function FlashcardsClientView({
   const [isFlipped, setIsFlipped] = useState(false)
   const [masteredIds, setMasteredIds] = useState<string[]>([])
   const [reviewingIds, setReviewingIds] = useState<string[]>([])
+  const [isDeckCompleted, setIsDeckCompleted] = useState(false)
   const [isGenModalOpen, setIsGenModalOpen] = useState(false)
   const [genMaterialId, setGenMaterialId] = useState(materials[0]?.id || "")
   const [generating, setGenerating] = useState(false)
@@ -55,6 +56,25 @@ export function FlashcardsClientView({
     setIsFlipped(false)
     setMasteredIds([])
     setReviewingIds([])
+    setIsDeckCompleted(false)
+  }
+
+  async function persistProgress(mIds: string[], rIds: string[]) {
+    if (!activeDeck) return
+    try {
+      await fetch("/api/academic/flashcards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_progress",
+          deck_id: activeDeck.id,
+          mastered_card_ids: mIds,
+          reviewing_card_ids: rIds,
+        }),
+      })
+    } catch (err) {
+      console.error("Failed to persist flashcard progress", err)
+    }
   }
 
   function handleNextCard() {
@@ -62,6 +82,8 @@ export function FlashcardsClientView({
     if (currentCardIndex < activeDeck.cards.length - 1) {
       setCurrentCardIndex((prev) => prev + 1)
       setIsFlipped(false)
+    } else {
+      setIsDeckCompleted(true)
     }
   }
 
@@ -73,19 +95,31 @@ export function FlashcardsClientView({
   }
 
   function markMastered(cardId: string) {
-    if (!masteredIds.includes(cardId)) {
-      setMasteredIds((prev) => [...prev, cardId])
-      setReviewingIds((prev) => prev.filter((id) => id !== cardId))
+    const nextMastered = masteredIds.includes(cardId) ? masteredIds : [...masteredIds, cardId]
+    const nextReviewing = reviewingIds.filter((id) => id !== cardId)
+    setMasteredIds(nextMastered)
+    setReviewingIds(nextReviewing)
+    persistProgress(nextMastered, nextReviewing)
+
+    if (activeDeck && currentCardIndex >= activeDeck.cards.length - 1) {
+      setIsDeckCompleted(true)
+    } else {
+      handleNextCard()
     }
-    handleNextCard()
   }
 
   function markReviewing(cardId: string) {
-    if (!reviewingIds.includes(cardId)) {
-      setReviewingIds((prev) => [...prev, cardId])
-      setMasteredIds((prev) => prev.filter((id) => id !== cardId))
+    const nextReviewing = reviewingIds.includes(cardId) ? reviewingIds : [...reviewingIds, cardId]
+    const nextMastered = masteredIds.filter((id) => id !== cardId)
+    setReviewingIds(nextReviewing)
+    setMasteredIds(nextMastered)
+    persistProgress(nextMastered, nextReviewing)
+
+    if (activeDeck && currentCardIndex >= activeDeck.cards.length - 1) {
+      setIsDeckCompleted(true)
+    } else {
+      handleNextCard()
     }
-    handleNextCard()
   }
 
   async function handleGenerateDeck(e: React.FormEvent) {
@@ -125,7 +159,66 @@ export function FlashcardsClientView({
   return (
     <div className="space-y-6">
       {/* Active Deck Study Player */}
-      {activeDeck && currentCard ? (
+      {activeDeck && isDeckCompleted ? (
+        <div className="rounded-xl border border-border bg-card p-8 shadow-md space-y-6 animate-in fade-in zoom-in-95 duration-200 max-w-2xl mx-auto text-center">
+          <div className="mx-auto w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-500">
+            <CheckCircle2 className="h-8 w-8" />
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-xs font-bold text-primary px-2.5 py-1 rounded bg-primary/10">
+              {activeDeck.course_code || "CS302"} Deck Complete
+            </span>
+            <h2 className="text-2xl font-bold">{activeDeck.title}</h2>
+            <p className="text-xs text-muted-foreground">
+              Revision session recorded. Your spaced repetition retention metrics have been saved.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 max-w-sm mx-auto">
+            <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 text-center">
+              <p className="text-2xl font-extrabold text-emerald-600">{masteredIds.length}</p>
+              <p className="text-xs font-semibold text-muted-foreground mt-0.5">Mastered</p>
+            </div>
+            <div className="p-4 rounded-xl border border-amber-500/20 bg-amber-500/5 text-center">
+              <p className="text-2xl font-extrabold text-amber-600">{reviewingIds.length}</p>
+              <p className="text-xs font-semibold text-muted-foreground mt-0.5">Need Review</p>
+            </div>
+          </div>
+
+          <div className="space-y-1.5 max-w-sm mx-auto">
+            <div className="flex items-center justify-between text-xs font-medium">
+              <span>Retention Score</span>
+              <span className="font-bold text-emerald-600">{masteryPercentage}%</span>
+            </div>
+            <div className="w-full bg-muted rounded-full h-2.5 overflow-hidden">
+              <div
+                className="bg-emerald-600 h-2.5 rounded-full transition-all duration-500"
+                style={{ width: `${masteryPercentage}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-4">
+            <button
+              onClick={() => {
+                setCurrentCardIndex(0)
+                setIsFlipped(false)
+                setIsDeckCompleted(false)
+              }}
+              className="px-4 py-2 rounded-xl border border-border hover:bg-muted text-xs font-bold flex items-center gap-1.5"
+            >
+              <RotateCcw className="h-3.5 w-3.5" /> Study Deck Again
+            </button>
+            <button
+              onClick={() => setActiveDeck(null)}
+              className="px-4 py-2 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold shadow-sm"
+            >
+              Back to Course Decks
+            </button>
+          </div>
+        </div>
+      ) : activeDeck && currentCard ? (
         <div className="rounded-xl border border-border bg-card p-6 shadow-md space-y-6 animate-in fade-in duration-150 max-w-2xl mx-auto">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-border pb-3">
